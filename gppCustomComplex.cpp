@@ -1,5 +1,5 @@
 #include "CustomComplex.h"
-#include <ittnotify.h>
+//#include <ittnotify.h>
 
 /*Contains stride dimenion*/
 
@@ -135,8 +135,8 @@ void noflagOCC_solver(int number_bands, int ngpown, int ncouls, int *inv_igp_ind
 {
     if(stride == 0)
     {
-        __SSC_MARK(0x111);
-        __itt_resume();
+//        __SSC_MARK(0x111);
+//        __itt_resume();
 #pragma omp parallel for  default(shared) firstprivate(ngpown, ncouls, number_bands) reduction(+:achtemp_re[nstart:nend], achtemp_im[nstart:nend])
         for(int n1 = 0; n1<number_bands; ++n1) 
         {
@@ -174,8 +174,8 @@ void noflagOCC_solver(int number_bands, int ngpown, int ncouls, int *inv_igp_ind
                 }
             } //ngpown
         } //number_bands
-        __itt_pause();
-        __SSC_MARK(0x222);
+//        __itt_pause();
+//        __SSC_MARK(0x222);
     }
     else
     {

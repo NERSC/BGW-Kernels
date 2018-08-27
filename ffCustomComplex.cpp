@@ -5,7 +5,13 @@
 #include "CustomComplex.h"
 //#include "Complex.h"
 
+#define ALIGN 64
+#define BLOCKSIZE 512
+#define MAX(a,b) (a > b ? a : b)
+#define MIN(a,b) (a < b ? a : b)
+
 using namespace std;
+typedef CustomComplex<double,double> DComplex;
 
 static inline void schDttt_corKernel1(CustomComplex<double, double> &schDttt_cor, int *inv_igp_index, int *indinv, CustomComplex<double, double> *I_epsR_array, CustomComplex<double, double> *I_epsA_array, CustomComplex<double, double> *aqsmtemp, CustomComplex<double, double> *aqsntemp, CustomComplex<double, double> &schDttt, double *vcoul, int ncouls, int ifreq, int ngpown, int n1, double fact1, double fact2);
 
@@ -13,48 +19,61 @@ static inline void schDttt_corKernel2(CustomComplex<double, double> &schDttt_cor
 
 void calculate_schDt_lin3(CustomComplex<double, double>& schDt_lin3, CustomComplex<double, double>* sch2Di, bool flag_occ, int freqevalmin, double *ekq, int iw, int freqevalstep, double cedifft_zb_right, double cedifft_zb_left, CustomComplex<double, double> schDt_left, CustomComplex<double, double> schDt_lin2, int n1, double pref_zb, CustomComplex<double, double> pref_zb_compl, CustomComplex<double, double> schDt_avg)
 {
-    double intfact = (freqevalmin - ekq[n1] + (iw-1) * freqevalstep - cedifft_zb_right) / (freqevalmin - ekq[n1] + (iw-1) * freqevalstep - cedifft_zb_left);
-    if(intfact < 0.0001) intfact = 0.0001;
-    if(intfact > 10000) intfact = 10000;
-    intfact = -log(intfact);
+    //normalization is the same for all
+    double norm = 1. / (freqevalmin - ekq[n1] + (iw-1) * freqevalstep - cedifft_zb_left);
+    double prefact = flag_occ ? -1. : 1.;
+    //we stick it into a log, so better take the abs
+    double intfact = abs((freqevalmin - ekq[n1] + (iw-1) * freqevalstep - prefact * cedifft_zb_right) * norm);
+    intfact = MAX(MIN(10000, intfact), 0.0001);
+    intfact = (-prefact) * log(intfact);
     sch2Di[iw] = sch2Di[iw] - pref_zb_compl * schDt_avg * intfact;
-    if(flag_occ)
-    {
-       double  intfact = abs((freqevalmin - ekq[n1] + (iw-1)*freqevalstep + cedifft_zb_right) / (freqevalmin - ekq[n1] + (iw-1)*freqevalstep + cedifft_zb_left));
-        if(intfact < 0.0001) intfact = 0.0001;
-        if(intfact > 10000) intfact = 10000;
-        intfact = log(intfact);
-        schDt_lin3 = (schDt_left + schDt_lin2) * (-freqevalmin - ekq[n1] + (iw-1)*freqevalstep - cedifft_zb_left)*intfact ;
-    }
-    else
-        schDt_lin3 = (schDt_left + schDt_lin2) * (freqevalmin - ekq[n1] + (iw-1)*freqevalstep - cedifft_zb_left)*intfact;
+    schDt_lin3 = (schDt_left + schDt_lin2) * (prefact * freqevalmin - ekq[n1] + (iw-1) * freqevalstep - cedifft_zb_left) * intfact;
+    
+    //double norm = 1. / (freqevalmin - ekq[n1] + (iw-1) * freqevalstep - cedifft_zb_left);
+    //double intfact = (freqevalmin - ekq[n1] + (iw-1) * freqevalstep - cedifft_zb_right) * norm;
+    //if(intfact < 0.0001) intfact = 0.0001;
+    //if(intfact > 10000) intfact = 10000;
+    //intfact = -log(intfact);
+    //sch2Di[iw] = sch2Di[iw] - pref_zb_compl * schDt_avg * intfact;
+    //if(flag_occ)
+    //{
+    //   double  intfact = abs((freqevalmin - ekq[n1] + (iw-1) * freqevalstep + cedifft_zb_right) * norm; 
+    //    if(intfact < 0.0001) intfact = 0.0001;
+    //    if(intfact > 10000) intfact = 10000;
+    //    intfact = log(intfact);
+    //    schDt_lin3 = (schDt_left + schDt_lin2) * (-freqevalmin - ekq[n1] + (iw-1) * freqevalstep - cedifft_zb_left) * intfact;
+    //}
+    //else
+    //    schDt_lin3 = (schDt_left + schDt_lin2) * (freqevalmin - ekq[n1] + (iw-1) * freqevalstep - cedifft_zb_left) * intfact;
 
 }
 
 static inline void compute_fact(double wx, int nFreq, double *dFreqGrid, double &fact1, double &fact2, int &ifreq, int loop, bool flag_occ)
 {
-    if(loop == 1 && wx > 0.00)
+    if(loop == 1)
     {
-            for(int ijk = 0; ijk < nFreq-1; ++ijk)
+            double wxa = abs(wx);
+            for(int ijk = 0; ijk < (nFreq-1); ++ijk)
             {
-                if(wx > dFreqGrid[ijk] && wx < dFreqGrid[ijk+1])
-                ifreq = ijk;
+                if(wxa > dFreqGrid[ijk] && wxa < dFreqGrid[ijk+1])
+                        ifreq = ijk;
             }
             if(ifreq == 0) ifreq = nFreq-2;
-            fact1 = (dFreqGrid[ifreq+1] - wx) / (dFreqGrid[ifreq+1] - dFreqGrid[ifreq]);
-            fact2 = (wx - dFreqGrid[ifreq]) / (dFreqGrid[ifreq+1] - dFreqGrid[ifreq]);
+            double norm = 1. / (dFreqGrid[ifreq+1] - dFreqGrid[ifreq]);
+            fact1 = (dFreqGrid[ifreq+1] - wxa) * norm;
+            fact2 = (wxa - dFreqGrid[ifreq]) * norm;
     }
-    else if(loop == 1)
-    {
-        for(int ijk = 0; ijk < nFreq-1; ++ijk)
-        {
-            if(-wx > dFreqGrid[ijk] && -wx < dFreqGrid[ijk+1])
-                ifreq = ijk;
-        }
-        if(ifreq == 0) ifreq = nFreq-2;
-        fact1 = (dFreqGrid[ifreq+1] + wx) / (dFreqGrid[ifreq+1] - dFreqGrid[ifreq]);
-        fact2 = (-dFreqGrid[ifreq] - wx) / (dFreqGrid[ifreq+1] - dFreqGrid[ifreq]);
-    }
+    //else if(loop == 1)
+    //{
+    //    for(int ijk = 0; ijk < nFreq-1; ++ijk)
+    //    {
+    //        if(-wx > dFreqGrid[ijk] && -wx < dFreqGrid[ijk+1])
+    //            ifreq = ijk;
+    //    }
+    //    if(ifreq == 0) ifreq = nFreq-2;
+    //    fact1 = (dFreqGrid[ifreq+1] + wx) / (dFreqGrid[ifreq+1] - dFreqGrid[ifreq]);
+    //    fact2 = (-dFreqGrid[ifreq] - wx) / (dFreqGrid[ifreq+1] - dFreqGrid[ifreq]);
+    //}
     if(loop == 2 && wx > 0.00)
     {
             for(int ijk = 0; ijk < nFreq-1; ++ijk)
@@ -83,15 +102,15 @@ static inline void compute_fact(double wx, int nFreq, double *dFreqGrid, double 
 
 static inline void ssxDittt_kernel(int *inv_igp_index, int *indinv, CustomComplex<double, double> *aqsmtemp, CustomComplex<double, double> *aqsntemp, double *vcoul, CustomComplex<double, double> *I_eps_array, CustomComplex<double, double> &ssxDittt, int ngpown, int ncouls, int n1,int ifreq, double fact1, double fact2, int igp, int my_igp)
 {
-    CustomComplex<double, double> ssxDitt(0.00, 0.00);
+    ssxDittt = CustomComplex<double, double>(0.00, 0.00);
     for(int ig = 0; ig < ncouls; ++ig)
     {
         CustomComplex<double, double> ssxDit = I_eps_array[ifreq*ngpown*ncouls + my_igp*ncouls + ig] * fact1 + \
                                      I_eps_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig] * fact2;
 
-        ssxDitt += aqsntemp[n1*ncouls + ig] * CustomComplex_conj(aqsmtemp[n1*ncouls + igp]) * ssxDit * vcoul[igp];
+        ssxDittt += aqsntemp[n1*ncouls + ig] * CustomComplex_conj(aqsmtemp[n1*ncouls + igp]) * ssxDit * vcoul[igp];
     }
-    ssxDittt = ssxDitt;
+    //ssxDittt = ssxDitt;
 }
 
 
@@ -105,7 +124,7 @@ void achsDtemp_Kernel(int number_bands, int ngpown, int ncouls, int *inv_igp_ind
         {
             int indigp = inv_igp_index[my_igp];
             int igp = indinv[indigp];
-            int tid = omp_get_thread_num();
+            //int tid = omp_get_thread_num();
 
             CustomComplex<double, double> schsDtemp(0.00, 0.00);
 
@@ -147,8 +166,8 @@ static inline void asxDtemp_Kernel(int nvband, int nfreqeval, int ncouls, int ng
                 compute_fact(wx, nFreq, dFreqGrid, fact1, fact2, ifreq, 1, 0);
 
     //The ssxDittt_kernel is OMP parallelized.
-            if(wx > 0)
-                ssxDittt_kernel(inv_igp_index, indinv, aqsmtemp, aqsntemp, vcoul, I_epsR_array, ssxDittt, ngpown, ncouls, n1, ifreq, fact1, fact2, igp, my_igp);
+                if(wx > 0)
+                    ssxDittt_kernel(inv_igp_index, indinv, aqsmtemp, aqsntemp, vcoul, I_epsR_array, ssxDittt, ngpown, ncouls, n1, ifreq, fact1, fact2, igp, my_igp);
                 else
                     ssxDittt_kernel(inv_igp_index, indinv, aqsmtemp, aqsntemp, vcoul, I_epsA_array, ssxDittt, ngpown, ncouls, n1, ifreq, fact1, fact2, igp, my_igp);
 
@@ -189,8 +208,8 @@ void achDtemp_Kernel(int number_bands, int nvband, int nfreqeval, int ncouls, in
 
             if(flag_occ)
                 cedifft_cor = cedifft_compl * -1 - dFreqBrd[ifreq];
-                else
-                    cedifft_cor = cedifft_compl - dFreqBrd[ifreq];
+            else
+                cedifft_cor = cedifft_compl - dFreqBrd[ifreq];
 
             if(ifreq != 0)
             {
@@ -240,7 +259,7 @@ static inline void achDtemp_cor_Kernel(int number_bands, int nvband, int nfreqev
             double wx = freqevalmin - ekq[n1] + freqevalstep;
 
             double fact1 = 0.00, fact2 = 0.00;
-            int ifreq = 0.00;
+            int ifreq = 0;
 
             compute_fact(wx, nFreq, dFreqGrid, fact1, fact2, ifreq, 2, flag_occ);
 
@@ -249,9 +268,9 @@ static inline void achDtemp_cor_Kernel(int number_bands, int nvband, int nfreqev
                 if(!flag_occ)
                 schDttt_corKernel1(schDi_cor, inv_igp_index, indinv, I_epsR_array, I_epsA_array, aqsmtemp, aqsntemp, sch2Di,vcoul,  ncouls, ifreq, ngpown, n1, fact1, fact2);
             }
-            else if(flag_occ)
+            else if(flag_occ){
                 schDttt_corKernel2(schDi_cor, inv_igp_index, indinv, I_epsR_array, I_epsA_array, aqsmtemp, aqsntemp, vcoul,  ncouls, ifreq, ngpown, n1, fact1, fact2);
-
+            }
 
 //Summing up at the end of iw loop
             ach2Dtemp[iw] += sch2Di;
@@ -263,49 +282,46 @@ static inline void achDtemp_cor_Kernel(int number_bands, int nvband, int nfreqev
 
 static inline void schDttt_corKernel1(CustomComplex<double, double> &schDttt_cor, int *inv_igp_index, int *indinv, CustomComplex<double, double> *I_epsR_array, CustomComplex<double, double> *I_epsA_array, CustomComplex<double, double> *aqsmtemp, CustomComplex<double, double> *aqsntemp, CustomComplex<double, double> &schDttt, double *vcoul, int ncouls, int ifreq, int ngpown, int n1, double fact1, double fact2)
 {
-    int blkSize = 512;
-    double schDttt_cor_re = 0.00, schDttt_cor_im = 0.00, \
-        schDttt_re = 0.00, schDttt_im = 0.00;
-#pragma omp parallel for default(shared) collapse(2) reduction(+:schDttt_cor_re, schDttt_cor_im, schDttt_re, schDttt_im)
+    constexpr int blkSize = BLOCKSIZE;
+    double schDttt_cor_re = 0.00, schDttt_cor_im = 0.00; //, schDttt_re = 0.00, schDttt_im = 0.00;
+#pragma omp parallel for default(shared) collapse(2) reduction(+:schDttt_cor_re, schDttt_cor_im) //, schDttt_re, schDttt_im)
     for(int igbeg = 0; igbeg < ncouls; igbeg += blkSize)
     {
         for(int my_igp = 0; my_igp < ngpown; ++my_igp)
         {
+#pragma omp simd reduction(+:schDttt_cor_re, schDttt_cor_im) aligned(I_epsR_array,I_epsA_array,aqsntemp,aqsmtemp:ALIGN)
             for(int ig = igbeg; ig < min(ncouls, igbeg+blkSize); ++ig)
             {
                 int indigp = inv_igp_index[my_igp] ;
                 int igp = indinv[indigp];
-                CustomComplex<double, double> sch2Dt = (I_epsR_array[ifreq*ngpown*ncouls + my_igp*ncouls + ig] - I_epsA_array[ifreq*ngpown*ncouls + my_igp*ncouls + ig]) * fact1 + \
-                                            (I_epsR_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig] - I_epsA_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig]) * fact2;
+                CustomComplex<double, double> sch2Dt = (I_epsR_array[ifreq*ngpown*ncouls + my_igp*ncouls + ig] - I_epsA_array[ifreq*ngpown*ncouls + my_igp*ncouls + ig]) * fact1 + (I_epsR_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig] - I_epsA_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig]) * fact2;
                 CustomComplex<double, double> sch2Dtt = aqsntemp[n1*ncouls + ig] * CustomComplex_conj(aqsmtemp[n1*ncouls + igp]) * sch2Dt * vcoul[igp];
 
-
-                schDttt_re += CustomComplex_real(sch2Dtt) ;
-                schDttt_im += CustomComplex_imag(sch2Dtt) ;
+                //schDttt_re += CustomComplex_real(sch2Dtt) ;
+                //schDttt_im += CustomComplex_imag(sch2Dtt) ;
                 schDttt_cor_re += CustomComplex_real(sch2Dtt) ;
                 schDttt_cor_im += CustomComplex_imag(sch2Dtt) ;
             }
         }
     }
     schDttt_cor = CustomComplex<double, double> (schDttt_cor_re, schDttt_cor_im);
-
 }
 
 static inline void schDttt_corKernel2(CustomComplex<double, double> &schDttt_cor, int *inv_igp_index, int *indinv, CustomComplex<double, double> *I_epsR_array, CustomComplex<double, double> *I_epsA_array, CustomComplex<double, double> *aqsmtemp, CustomComplex<double, double> *aqsntemp, double *vcoul, int ncouls, int ifreq, int ngpown, int n1, double fact1, double fact2)
 {
-    int blkSize = 512;
+    constexpr int blkSize = BLOCKSIZE;
     double schDttt_cor_re = 0.00, schDttt_cor_im = 0.00;
 #pragma omp parallel for default(shared) collapse(2) reduction(+:schDttt_cor_re, schDttt_cor_im)
     for(int igbeg = 0; igbeg < ncouls; igbeg += blkSize)
     {
         for(int my_igp = 0; my_igp < ngpown; ++my_igp)
         {
+#pragma omp simd reduction(+:schDttt_cor_re, schDttt_cor_im) aligned(I_epsR_array,I_epsA_array,aqsntemp,aqsmtemp,vcoul:ALIGN)
             for(int ig = igbeg; ig < min(ncouls, igbeg+blkSize); ++ig)
             {
                 int indigp = inv_igp_index[my_igp] ;
                 int igp = indinv[indigp];
-                CustomComplex<double, double> sch2Dt = ((I_epsR_array[ifreq*ngpown*ncouls + my_igp*ncouls + ig] - I_epsA_array[ifreq*ncouls*ngpown + my_igp*ncouls + ig]) * fact1 + \
-                                            (I_epsR_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig] - I_epsA_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig]) * fact2) * -0.5;
+                CustomComplex<double, double> sch2Dt = ((I_epsR_array[ifreq*ngpown*ncouls + my_igp*ncouls + ig] - I_epsA_array[ifreq*ncouls*ngpown + my_igp*ncouls + ig]) * fact1 + (I_epsR_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig] - I_epsA_array[(ifreq+1)*ngpown*ncouls + my_igp*ncouls + ig]) * fact2) * (-0.5);
                 CustomComplex<double, double> sch2Dtt = aqsntemp[n1*ncouls + ig] * CustomComplex_conj(aqsmtemp[n1*ncouls + igp]) * sch2Dt * vcoul[igp];
                 schDttt_cor_re += CustomComplex_real(sch2Dtt) ;
                 schDttt_cor_im += CustomComplex_imag(sch2Dtt) ;
@@ -370,40 +386,40 @@ int main(int argc, char** argv)
     CustomComplex<double, double> exprP1( 0.5 , 0.1);
 
 //Start to allocate the data structures;
-    int *inv_igp_index = new int[ngpown];
-    int *indinv = new int[ncouls];
-    double *vcoul = new double[ncouls];
-    double *ekq = new double[number_bands];
-    double *dFreqGrid = new double[nFreq];
-    double *pref = new double[nFreq];
+    int *inv_igp_index = reinterpret_cast<int*>(aligned_alloc(ALIGN, ngpown * sizeof(int)));//new int[ngpown];
+    int *indinv = reinterpret_cast<int*>(aligned_alloc(ALIGN, ncouls * sizeof(int)));//new int[ncouls];
+    double *vcoul = reinterpret_cast<double*>(aligned_alloc(ALIGN, ncouls * sizeof(double)));//new double[ncouls];
+    double *ekq = reinterpret_cast<double*>(aligned_alloc(ALIGN, number_bands * sizeof(double)));//new double[number_bands];
+    double *dFreqGrid = reinterpret_cast<double*>(aligned_alloc(ALIGN, nFreq * sizeof(double)));//new double[nFreq];
+    double *pref = reinterpret_cast<double*>(aligned_alloc(ALIGN, nFreq * sizeof(double)));//new double[nFreq];
     long double mem_alloc = 0.00;
 
-    CustomComplex<double, double> *aqsntemp = new CustomComplex<double, double>[number_bands * ncouls];
+    CustomComplex<double, double> *aqsntemp = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, number_bands * ncouls * sizeof(DComplex)));//new CustomComplex<double, double>[number_bands * ncouls];
     mem_alloc += (number_bands * ncouls * sizeof(CustomComplex<double, double>));
 
-    CustomComplex<double, double> *aqsmtemp= new CustomComplex<double, double>[number_bands * ncouls];
+    CustomComplex<double, double> *aqsmtemp = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, number_bands * ncouls * sizeof(DComplex)));//new CustomComplex<double, double>[number_bands * ncouls];
     mem_alloc += (number_bands * ncouls * sizeof(CustomComplex<double, double>));
 
-    CustomComplex<double, double> *I_epsR_array = new CustomComplex<double, double>[nFreq * ngpown * ncouls];
+    CustomComplex<double, double> *I_epsR_array = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nFreq * ngpown * ncouls * sizeof(DComplex)));//new CustomComplex<double, double>[nFreq * ngpown * ncouls];
     mem_alloc += (nFreq * ngpown * ncouls * sizeof(CustomComplex<double, double>));
 
-    CustomComplex<double, double> *I_epsA_array = new CustomComplex<double, double>[nFreq * ngpown * ncouls];
+    CustomComplex<double, double> *I_epsA_array = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nFreq * ngpown * ncouls * sizeof(DComplex)));//new CustomComplex<double, double>[nFreq * ngpown * ncouls];
     mem_alloc += (nFreq * ngpown * ncouls * sizeof(CustomComplex<double, double>));
 
-    CustomComplex<double, double> *schDi = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *sch2Di = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *schDi_cor = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *schDi_corb = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *achDtemp = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *ach2Dtemp = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *achDtemp_cor = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *achDtemp_corb = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *asxDtemp = new CustomComplex<double, double>[nfreqeval];
-    CustomComplex<double, double> *dFreqBrd = new CustomComplex<double, double>[nFreq];
+    CustomComplex<double, double> *schDi = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *sch2Di = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *schDi_cor = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *schDi_corb = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *achDtemp = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *ach2Dtemp = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *achDtemp_cor = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *achDtemp_corb = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *asxDtemp = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nfreqeval * sizeof(DComplex)));//new CustomComplex<double, double>[nfreqeval];
+    CustomComplex<double, double> *dFreqBrd = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, nFreq * sizeof(DComplex)));//new CustomComplex<double, double>[nFreq];
     mem_alloc += (nfreqeval * 9 * sizeof(CustomComplex<double, double>));
     mem_alloc += (nFreq * sizeof(CustomComplex<double, double>)) ;
 
-    CustomComplex<double, double> *schDt_matrix = new CustomComplex<double, double>[number_bands * nFreq];
+    CustomComplex<double, double> *schDt_matrix = reinterpret_cast<DComplex*>(aligned_alloc(ALIGN, number_bands * nFreq * sizeof(DComplex)));//new CustomComplex<double, double>[number_bands * nFreq];
     mem_alloc += (nFreq * number_bands * sizeof(CustomComplex<double, double>));
 
     //Variables used : 
